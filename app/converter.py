@@ -4,8 +4,10 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+import xml.etree.ElementTree as ET
 from typing import Iterable, Sequence
 
 import pypandoc
@@ -36,6 +38,10 @@ class ConversionResult:
 
 class HtmlToDocxConverter:
     """Perform HTML to DOCX conversions using Pandoc."""
+
+    _WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    _STYLE_IDS = ("Heading1", "Heading2", "Heading3", "Title")
+    _DEFAULT_FONT_COLOR = "000000"
 
     def __init__(
         self,
@@ -77,7 +83,8 @@ class HtmlToDocxConverter:
         input_path = workdir / f"input{input_extension}"
 
         if input_extension in {".html", ".htm"}:
-            processed_payload = prepare_html(payload)
+            promote = self._should_promote_entities(payload)
+            processed_payload = prepare_html(payload, promote_entities=promote)
             input_path.write_bytes(processed_payload)
             src_format = self._input_format
         elif input_extension == ".docx":
@@ -90,7 +97,7 @@ class HtmlToDocxConverter:
                 outputfile=str(html_path),
                 extra_args=list(self._pandoc_args),
             )
-            normalized_html = prepare_html(html_path.read_bytes())
+            normalized_html = prepare_html(html_path.read_bytes(), promote_entities=True)
             html_path.write_bytes(normalized_html)
             input_path = html_path
             src_format = self._input_format
@@ -118,7 +125,32 @@ class HtmlToDocxConverter:
         if not output_path.exists():
             raise ConversionFailedError("Pandoc reported success but no DOCX file was created.")
 
+        self._apply_style_overrides(output_path)
+
         return ConversionResult(output_path=output_path, download_name=output_name, workdir=workdir)
+
+    def convert_to_flat_html(self, payload: bytes, original_name: str | None = None) -> str:
+        """Convert payload to DOCX then back to sanitized HTML without document boilerplate."""
+
+        result = self.convert_input_bytes(payload, original_name=original_name)
+
+        try:
+            html_output = pypandoc.convert_file(
+                str(result.output_path),
+                "html",
+                extra_args=list(self._pandoc_args),
+            )
+        except OSError as exc:
+            raise PandocNotInstalledError(
+                "Pandoc is required for conversion. Install Pandoc and ensure it is on PATH."
+            ) from exc
+        except RuntimeError as exc:
+            raise ConversionFailedError(f"Pandoc failed to convert DOCX to HTML: {exc}") from exc
+        finally:
+            self.cleanup([result.workdir])
+
+        cleaned = prepare_html(html_output.encode("utf-8"), promote_entities=True)
+        return cleaned.decode("utf-8")
 
     @staticmethod
     def cleanup(paths: Iterable[Path | str]) -> None:
@@ -169,3 +201,79 @@ class HtmlToDocxConverter:
                 raise PandocNotInstalledError(
                     "Pandoc is required for conversion and automatic download failed."
                 ) from exc
+
+    def _apply_style_overrides(self, docx_path: Path) -> None:
+        """Enforce consistent heading colours on the generated DOCX."""
+
+        try:
+            self._force_heading_colors(docx_path, self._DEFAULT_FONT_COLOR)
+        except Exception:
+            # Styling failures shouldn't break conversion; keep the document as-is.
+            return
+
+    def _force_heading_colors(self, docx_path: Path, color_hex: str) -> None:
+        with tempfile.TemporaryDirectory(prefix="html2docx_styles_") as tmpdir:
+            tmp_root = Path(tmpdir)
+            with zipfile.ZipFile(docx_path) as docx_zip:
+                docx_zip.extractall(tmp_root)
+
+            styles_path = tmp_root / "word" / "styles.xml"
+            if not styles_path.exists():
+                return
+
+            ET.register_namespace("w", self._WORD_NS)
+            tree = ET.parse(styles_path)
+            root = tree.getroot()
+
+            ns = {"w": self._WORD_NS}
+
+            for style_id in self._STYLE_IDS:
+                style = root.find(f".//w:style[@w:styleId='{style_id}']", ns)
+                if style is None:
+                    continue
+                self._update_style_color(style, color_hex, ns)
+
+            tree.write(styles_path, encoding="utf-8", xml_declaration=True)
+
+            tmp_docx = tmp_root / "__styled.docx"
+            with zipfile.ZipFile(tmp_docx, "w", compression=zipfile.ZIP_DEFLATED) as new_docx:
+                for file in tmp_root.rglob("*"):
+                    if file == tmp_docx or file.is_dir():
+                        continue
+                    arcname = file.relative_to(tmp_root).as_posix()
+                    new_docx.write(file, arcname)
+
+            shutil.move(tmp_docx, docx_path)
+
+    def _update_style_color(self, style_element: ET.Element, color_hex: str, ns: dict[str, str]) -> None:
+        """Ensure both paragraph and run properties force the requested colour."""
+
+        color_tag = f"{{{self._WORD_NS}}}color"
+
+        def _ensure_color(parent: ET.Element) -> None:
+            if parent is None:
+                return
+            color = parent.find("w:color", ns)
+            if color is None:
+                color = ET.SubElement(parent, color_tag)
+            color.set(f"{{{self._WORD_NS}}}val", color_hex)
+            for attr in ("themeColor", "themeTint", "themeShade"):
+                color.attrib.pop(f"{{{self._WORD_NS}}}{attr}", None)
+
+        paragraph_props = style_element.find("w:pPr", ns)
+        if paragraph_props is None:
+            paragraph_props = ET.SubElement(style_element, f"{{{self._WORD_NS}}}pPr")
+        run_props = paragraph_props.find("w:rPr", ns)
+        if run_props is None:
+            run_props = ET.SubElement(paragraph_props, f"{{{self._WORD_NS}}}rPr")
+        _ensure_color(run_props)
+
+        style_run_props = style_element.find("w:rPr", ns)
+        if style_run_props is None:
+            style_run_props = ET.SubElement(style_element, f"{{{self._WORD_NS}}}rPr")
+        _ensure_color(style_run_props)
+
+    @staticmethod
+    def _should_promote_entities(payload: bytes) -> bool:
+        snippet = payload[:2048].lower()
+        return b"&lt;" in snippet and b"&gt;" in snippet
