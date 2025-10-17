@@ -51,8 +51,8 @@ class HtmlToDocxConverter:
         if auto_install_pandoc:
             self._ensure_pandoc_available()
 
-    def convert_html_bytes(self, payload: bytes, original_name: str | None = None) -> ConversionResult:
-        """Convert raw HTML bytes into a DOCX file.
+    def convert_input_bytes(self, payload: bytes, original_name: str | None = None) -> ConversionResult:
+        """Convert HTML or DOCX payload into a DOCX file.
 
         Args:
             payload: HTML document as bytes.
@@ -68,22 +68,43 @@ class HtmlToDocxConverter:
         """
 
         if not payload or not payload.strip():
-            raise InvalidHtmlError("Uploaded HTML is empty.")
+            raise InvalidHtmlError("Uploaded content is empty.")
 
         workdir = Path(tempfile.mkdtemp(prefix="html2docx_"))
-        input_name = self._ensure_html_extension(self._sanitize_filename(original_name))
-        input_path = workdir / input_name
-        processed_payload = prepare_html(payload)
-        input_path.write_bytes(processed_payload)
+        output_stem = self._sanitize_filename(original_name)
 
-        output_name = f"{input_path.stem}.docx"
+        input_extension = self._detect_extension(original_name)
+        input_path = workdir / f"input{input_extension}"
+
+        if input_extension in {".html", ".htm"}:
+            processed_payload = prepare_html(payload)
+            input_path.write_bytes(processed_payload)
+            src_format = self._input_format
+        elif input_extension == ".docx":
+            input_path.write_bytes(payload)
+            # Convert docx -> html to normalize math, then back to docx
+            html_path = workdir / "intermediate.html"
+            pypandoc.convert_file(
+                str(input_path),
+                "html",
+                outputfile=str(html_path),
+                extra_args=list(self._pandoc_args),
+            )
+            normalized_html = prepare_html(html_path.read_bytes())
+            html_path.write_bytes(normalized_html)
+            input_path = html_path
+            src_format = self._input_format
+        else:
+            raise InvalidHtmlError("Unsupported file type. Upload HTML or DOCX.")
+
+        output_name = f"{output_stem or 'document'}.docx"
         output_path = workdir / output_name
 
         try:
             pypandoc.convert_file(
                 str(input_path),
                 "docx",
-                format=self._input_format,
+                format=src_format,
                 outputfile=str(output_path),
                 extra_args=list(self._pandoc_args),
             )
@@ -124,6 +145,16 @@ class HtmlToDocxConverter:
     @staticmethod
     def _ensure_html_extension(name: str) -> str:
         return name if name.lower().endswith((".html", ".htm")) else f"{name}.html"
+
+    @staticmethod
+    def _detect_extension(name: str | None) -> str:
+        if not name:
+            return ".html"
+        lowered = name.lower()
+        for ext in (".html", ".htm", ".docx"):
+            if lowered.endswith(ext):
+                return ext
+        return ".html"
 
     @staticmethod
     def _ensure_pandoc_available() -> None:

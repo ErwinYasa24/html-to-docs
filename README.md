@@ -9,6 +9,7 @@ Python FastAPI microservice that converts uploaded HTML files into DOCX document
 - Math-aware conversion. Tag `<span class="math-tex">` otomatis diubah ke delimiters TeX (`\\( … \\)`), lalu diekspor sebagai persamaan Word
 - Otomatis mengunduh Pandoc saat belum tersedia, cocok untuk deploy Streamlit Cloud
 - Streamlit UI sederhana: upload → convert → download dalam satu halaman
+- Mendukung unggah HTML maupun DOCX; DOCX lama akan dinormalisasi ulang agar rumus tampil sebagai equation
 
 ## Requirements
 - Python 3.11+
@@ -40,12 +41,18 @@ python -m app.main
 python run_api.py
 ```
 
-Upload files by sending `multipart/form-data` request ke `POST /convert`:
+Upload files by sending `multipart/form-data` request ke `POST /convert` (HTML atau DOCX):
 ```bash
 curl -X POST \
   -F "html_file=@sample.html" \
   http://localhost:8000/convert \
   -o output.docx
+
+# contoh untuk DOCX yang ingin diperbaiki
+curl -X POST \
+  -F "html_file=@legacy.docx" \
+  http://localhost:8000/convert \
+  -o legacy-fixed.docx
 ```
 
 Docs are available at `http://localhost:8000/docs` when running in dev mode.
@@ -55,7 +62,7 @@ Docs are available at `http://localhost:8000/docs` when running in dev mode.
 streamlit run streamlit_app.py
 ```
 
-Antarmuka web akan menyediakan form unggah HTML dan tombol unduh DOCX hasil konversi.
+Antarmuka web menerima HTML ataupun DOCX lama, lalu menghasilkan DOCX baru dengan rumus yang sudah dinormalisasi.
 
 ## Project Layout
 ```

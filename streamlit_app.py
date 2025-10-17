@@ -19,7 +19,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.write(
-    """<p style='text-align:center;'>Unggah berkas `.html` lalu unduh hasil konversi `.docx`.</p>""",
+    """<p style='text-align:center;'>Unggah berkas `.html` atau `.docx`, lalu unduh hasil konversi `.docx` dengan rumus yang sudah diperbaiki.</p>""",
     unsafe_allow_html=True,
 )
 
@@ -27,8 +27,8 @@ converter = HtmlToDocxConverter()
 
 with st.form("upload-form"):
     uploaded_file = st.file_uploader(
-        "Pilih berkas HTML",
-        type=["html", "htm"],
+        "Pilih berkas HTML atau DOCX",
+        type=["html", "htm", "docx"],
         accept_multiple_files=False,
     )
     col_left, col_center, col_right = st.columns([3, 2, 3])
@@ -37,12 +37,15 @@ with st.form("upload-form"):
 
 if submit_btn:
     if not uploaded_file:
-        st.warning("Silakan pilih berkas HTML terlebih dahulu.")
+        st.warning("Silakan pilih berkas HTML atau DOCX terlebih dahulu.")
     else:
         try:
             raw_content = uploaded_file.read()
-            normalized = normalize_math_spans(raw_content.decode("utf-8", errors="ignore")).encode("utf-8")
-            result = converter.convert_html_bytes(normalized, original_name=uploaded_file.name)
+            normalized = raw_content
+            if uploaded_file.name.lower().endswith((".html", ".htm")):
+                normalized = normalize_math_spans(raw_content.decode("utf-8", errors="ignore")).encode("utf-8")
+
+            result = converter.convert_input_bytes(normalized, original_name=uploaded_file.name)
         except InvalidHtmlError as exc:
             st.error(f"Berkas tidak valid: {exc}")
         except PandocNotInstalledError as exc:
@@ -51,7 +54,7 @@ if submit_btn:
             st.error(f"Konversi gagal: {exc}")
         else:
             docx_bytes = result.output_path.read_bytes()
-            st.success("Konversi berhasil. Klik tombol di bawah untuk mengunduh.")
+            st.success("Konversi berhasil. Klik tombol di bawah untuk mengunduh DOCX baru.")
             st.download_button(
                 label="Download DOCX",
                 data=io.BytesIO(docx_bytes),

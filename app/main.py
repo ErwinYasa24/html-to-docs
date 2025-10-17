@@ -12,7 +12,7 @@ from app.converter import (
 )
 from app.preprocess import prepare_html
 
-ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
+ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB default cap
 
 app = FastAPI(title="HTML to DOCX Converter", version="0.1.0")
@@ -29,16 +29,17 @@ async def convert_html_document(
     background_tasks: BackgroundTasks,
     html_file: UploadFile = File(..., description="HTML file to convert to DOCX"),
 ) -> FileResponse:
-    if html_file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail="Unsupported content type. Upload HTML files only.")
+    if html_file.content_type not in ALLOWED_CONTENT_TYPES and not html_file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=415, detail="Unsupported file type. Upload HTML or DOCX.")
 
     payload = await html_file.read()
     if len(payload) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="File too large. Max 5 MB allowed.")
 
     try:
-        processed = prepare_html(payload)
-        result = converter.convert_html_bytes(processed, original_name=html_file.filename)
+        is_html = html_file.filename.lower().endswith((".html", ".htm"))
+        processed = prepare_html(payload) if is_html else payload
+        result = converter.convert_input_bytes(processed, original_name=html_file.filename)
     except InvalidHtmlError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PandocNotInstalledError as exc:
