@@ -7,6 +7,7 @@ Python FastAPI microservice that converts uploaded HTML files into DOCX document
 - Lightweight API with `/health` and `/convert` endpoints
 - Built-in payload validation and background cleanup of temporary files
 - Math-aware conversion. Tag `<span class="math-tex">` otomatis diubah ke delimiters TeX (`\\( … \\)`), lalu diekspor sebagai persamaan Word
+- Otomatis mengunduh Pandoc saat belum tersedia, cocok untuk deploy Streamlit Cloud
 - Streamlit UI sederhana: upload → convert → download dalam satu halaman
 
 ## Requirements

@@ -42,10 +42,14 @@ class HtmlToDocxConverter:
         *,
         pandoc_args: Sequence[str] | None = None,
         input_format: str | None = None,
+        auto_install_pandoc: bool = True,
     ) -> None:
         # Enable TeX math detection inside HTML (e.g. \( ... \) or $$ ... $$)
         self._input_format = input_format or "html+tex_math_dollars+tex_math_single_backslash"
         self._pandoc_args: Sequence[str] = pandoc_args or ("--mathjax",)
+
+        if auto_install_pandoc:
+            self._ensure_pandoc_available()
 
     def convert_html_bytes(self, payload: bytes, original_name: str | None = None) -> ConversionResult:
         """Convert raw HTML bytes into a DOCX file.
@@ -120,3 +124,17 @@ class HtmlToDocxConverter:
     @staticmethod
     def _ensure_html_extension(name: str) -> str:
         return name if name.lower().endswith((".html", ".htm")) else f"{name}.html"
+
+    @staticmethod
+    def _ensure_pandoc_available() -> None:
+        """Ensure pandoc binary is available, downloading if necessary."""
+
+        try:
+            pypandoc.get_pandoc_path()
+        except OSError:
+            try:
+                pypandoc.download_pandoc()
+            except OSError as exc:
+                raise PandocNotInstalledError(
+                    "Pandoc is required for conversion and automatic download failed."
+                ) from exc
