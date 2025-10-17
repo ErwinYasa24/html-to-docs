@@ -11,7 +11,6 @@ from app.converter import (
     InvalidHtmlError,
     PandocNotInstalledError,
 )
-from app.preprocess import normalize_math_spans
 
 st.set_page_config(page_title="HTML → DOCX Converter", page_icon="📝")
 st.markdown(
@@ -41,11 +40,7 @@ if submit_btn:
     else:
         try:
             raw_content = uploaded_file.read()
-            normalized = raw_content
-            if uploaded_file.name.lower().endswith((".html", ".htm")):
-                normalized = normalize_math_spans(raw_content.decode("utf-8", errors="ignore")).encode("utf-8")
-
-            result = converter.convert_input_bytes(normalized, original_name=uploaded_file.name)
+            result = converter.convert_input_bytes(raw_content, original_name=uploaded_file.name)
         except InvalidHtmlError as exc:
             st.error(f"Berkas tidak valid: {exc}")
         except PandocNotInstalledError as exc:
